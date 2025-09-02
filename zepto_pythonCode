@@ -1,0 +1,125 @@
+# Set up database connection
+import psycopg2
+
+# --- USE PLAIN STRINGS HERE ---
+DB_NAME = "your project name"          # database you created
+DB_USER = "your username"       # your postgres username
+DB_PASSWORD = "your sql password" # the password you set
+DB_HOST = "localhost"
+DB_PORT = "5432"
+
+def get_conn():
+    return psycopg2.connect(
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT
+    )
+
+# Quick connectivity check
+try:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT version();")
+            print("Connected to:", cur.fetchone()[0])
+except Exception as e:
+    print("Connection failed !. Check credentials.\n", e)
+
+#Create zepto table
+ddl = """
+CREATE TABLE IF NOT EXISTS zepto (
+    sku_id SERIAL PRIMARY KEY,
+    category VARCHAR(120),
+    name VARCHAR(150) NOT NULL,
+    mrp NUMERIC(8,2),
+    discountPercent NUMERIC(5,2),
+    availableQuantity INTEGER,
+    discountedSellingPrice NUMERIC(8,2),
+    weightInGms INTEGER,
+    outOfStock BOOLEAN,
+    quantity INTEGER
+);
+"""
+with get_conn() as conn:
+    with conn.cursor() as cur:
+        cur.execute(ddl)
+    conn.commit()
+print("Table `zepto` is ready (created if it did not exist).")
+
+# If data already exists in your table
+with get_conn() as conn:
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM zepto;")
+        print("Total rows in zepto:", cur.fetchone()[0])
+
+#Explore with SQL
+def q(sql):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            rows = cur.fetchall()
+            cols = [desc[0] for desc in cur.description]
+    print(cols)
+    for r in rows:
+        print(r)
+
+print("Row count:")
+q("SELECT COUNT(*) AS row_count FROM zepto;")
+
+print("\nDistinct categories:")
+q("SELECT DISTINCT category FROM zepto ORDER BY category;")
+
+print("\nIn-stock vs out-of-stock:")
+q("SELECT outOfStock, COUNT(*) FROM zepto GROUP BY outOfStock ORDER BY outOfStock;")
+
+#Load data into Pandas
+import pandas as pd
+
+with get_conn() as conn:
+    df = pd.read_sql("SELECT * FROM zepto ORDER BY sku_id;", conn)
+
+df.head()
+
+
+#Analysis
+# Q1: Top 10 best-value products (highest discount %)
+with get_conn() as conn:
+    top_discounts = pd.read_sql(
+        "SELECT DISTINCT name, mrp, discountPercent FROM zepto ORDER BY discountPercent DESC LIMIT 10;",
+        conn
+    )
+top_discounts
+
+
+#Estimated revenue per category = sum(discountedSellingPrice * availableQuantity)
+with get_conn() as conn:
+    revenue = pd.read_sql(
+        "SELECT category, SUM(discountedSellingPrice * availableQuantity) AS total_revenue "
+        "FROM zepto GROUP BY category ORDER BY total_revenue DESC;",
+        conn
+    )
+revenue
+
+
+#Visualization (Using matploylib)
+
+
+# Load the table into DataFrame
+df = pd.read_sql("SELECT * FROM zepto;", conn)
+conn.close()
+
+print(df.head())  # preview first rows
+
+import matplotlib.pyplot as plt
+
+stock_by_cat = df.groupby("category")["availablequantity"].sum().sort_values(ascending=False)
+
+plt.figure()
+stock_by_cat.plot(kind="bar")
+plt.title("Available Stock per Category")
+plt.ylabel("Quantity")
+plt.xlabel("Category")
+plt.xticks(rotation=45, ha="right")
+plt.tight_layout()
+plt.show()
